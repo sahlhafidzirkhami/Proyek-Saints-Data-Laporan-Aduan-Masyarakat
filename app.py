@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import re
+from pathlib import Path
+import streamlit.components.v1 as components
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="Public Insight Engine", layout="wide")
@@ -36,7 +38,7 @@ def clean_agency_name(text):
 # --- FUNGSI LOAD DATA ---
 @st.cache_data
 def load_data():
-    file_path = "laporan21-24.xlsx" 
+    file_path = "./laporan21-24.xlsx" 
     
     try:
         # Baca Excel dengan engine openpyxl
@@ -165,3 +167,51 @@ if not df.empty:
 
 else:
     st.warning("Data kosong. Silakan cek file Excel Anda.")
+
+# --- GIS / PETA INTERAKTIF ---
+try:
+    # Sidebar control to show map (loads CSV produced by GIS_improved.py)
+    st.sidebar.header("🗺️ Peta")
+    show_map = st.sidebar.checkbox("Tampilkan Peta Interaktif (Folium)")
+
+    if show_map:
+        
+        script_dir = Path(__file__).resolve().parent
+        csv_path = script_dir / 'data_gis_kecamatan_improved.csv'
+
+        if not csv_path.exists():
+            st.info("File peta agregat tidak ditemukan: run `GIS_improved.py` terlebih dahulu atau upload CSV.")
+            uploaded = st.file_uploader("Upload file `data_gis_kecamatan_improved.csv` jika tersedia", type=['csv'])
+            if uploaded is None:
+                st.stop()
+            else:
+                df_map = pd.read_csv(uploaded)
+        else:
+            df_map = pd.read_csv(csv_path)
+
+        if df_map.empty:
+            st.warning("Data peta kosong.")
+        else:
+            # Try to import folium lazily
+            try:
+                import folium
+            except Exception:
+                st.error("Paket `folium` tidak terpasang. Pasang dengan: pip install folium")
+                st.stop()
+
+            valid = df_map.dropna(subset=['lat', 'lon'])
+            if valid.empty:
+                st.warning("Tidak ada koordinat valid pada CSV peta.")
+            else:
+                m = folium.Map(location=[valid['lat'].mean(), valid['lon'].mean()], zoom_start=11, tiles='CartoDB positron')
+                for _, r in valid.iterrows():
+                    popup = folium.Popup(f"<b>{r.get('kecamatan','')}</b><br/>Laporan: {r.get('count', '')}", max_width=300)
+                    folium.CircleMarker(location=(r['lat'], r['lon']), radius=6 + (int(r.get('count',0)) / max(1, valid['count'].max())) * 12,
+                                         color='#2a9d8f', fill=True, fill_color='#2a9d8f', fill_opacity=0.7, popup=popup, weight=0.8).add_to(m)
+
+                # Render Folium map to HTML string and embed
+                map_html = m.get_root().render()
+                components.html(map_html, height=600)
+
+except Exception as e:
+    st.error(f"Terjadi error pada bagian peta: {e}")
