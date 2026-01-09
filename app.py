@@ -8,7 +8,7 @@ from datetime import datetime
 # --- 1. SETUP HALAMAN ---
 st.set_page_config(
     page_title="Analisis Aduan Masyarakat",
-    page_icon="🛡️",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
