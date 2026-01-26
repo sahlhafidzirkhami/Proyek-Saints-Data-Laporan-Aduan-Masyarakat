@@ -19,6 +19,7 @@ ADMIN_PASS = "admin123"
 def clean_category_name(text):
     if pd.isna(text) or str(text).strip() in ["-", "", "nan"]: return "Tidak Diketahui"
     text = str(text).strip()
+    # Hapus prefix standar agar lebih pendek
     for prefix in ["Lainnya terkait ", "Permintaan Informasi ", "Pengaduan ", "Aspirasi "]:
         text = text.replace(prefix, "")
     return text
@@ -35,6 +36,10 @@ def clean_agency_name(text):
     if "pendidikan" in text or "disdik" in text: return "Dinas Pendidikan"
     if "perhubungan" in text or "dishub" in text: return "Dinas Perhubungan"
     return str(text).title()
+
+def clean_kecamatan(text):
+    if pd.isna(text) or str(text).strip() in ["-", "", "nan"]: return "Tidak Diketahui"
+    return str(text).title().strip()
 
 # --- FUNGSI MENCARI FILE ---
 def get_file_path():
@@ -57,6 +62,7 @@ def load_data():
         else:
             df = pd.read_csv(file_path)
 
+        # 1. MAPPING KOLOM
         col_map = {
             'tanggal_masuk': 'Tanggal Laporan Masuk',
             'kategori': 'Kategori',
@@ -64,21 +70,26 @@ def load_data():
             'isi_laporan_awal': 'Isi Laporan Awal',
             'isi_laporan_akhir': 'Isi Laporan Akhir', 
             'tracking_id': 'Tracking ID',
-            'status_final': 'Status Final'
+            'status_final': 'Status Final',
+            'kecamatan_final': 'Kecamatan' # Mapping kolom kecamatan
         }
         df.rename(columns=col_map, inplace=True)
         
+        # 2. VALIDASI KOLOM WAJIB
         required = ['Tanggal Laporan Masuk', 'Kategori', 'Isi Laporan Awal', 'Status Final']
         for c in required:
             if c not in df.columns: df[c] = "-"
 
+        # 3. HANDLING TRACKING ID (STRING)
         if 'Tracking ID' not in df.columns: 
             df['Tracking ID'] = df.index.astype(str)
         else:
             df['Tracking ID'] = df['Tracking ID'].astype(str).str.replace(r'\.0$', '', regex=True)
 
         if 'Isi Laporan Akhir' not in df.columns: df['Isi Laporan Akhir'] = "-"
+        if 'Kecamatan' not in df.columns: df['Kecamatan'] = "Tidak Diketahui"
 
+        # 4. DATA CLEANING
         df['Status_Clean'] = df['Status Final'].astype(str).str.title().str.strip()
         df['Status_Clean'] = df['Status_Clean'].replace(['Nan', 'nan', '-', ''], 'Diproses')
 
@@ -86,6 +97,7 @@ def load_data():
         df['Tahun'] = df['Tanggal_Parsed'].dt.year
         df['Bulan'] = df['Tanggal_Parsed'].dt.to_period('M').astype(str)
         
+        # SLA Calculation
         df['Target_Selesai'] = df['Tanggal_Parsed'] + pd.Timedelta(days=SLA_HARI)
         today = pd.Timestamp.now()
         df['Sisa_Hari'] = (df['Target_Selesai'] - today).dt.days
@@ -98,10 +110,13 @@ def load_data():
             
         df['Status_Waktu'] = df.apply(get_time_status, axis=1)
 
+        # Cleaning Kategori & Instansi & Kecamatan
         df['Kategori_Clean'] = df['Kategori'].apply(clean_category_name)
         df['Instansi_Clean'] = df['Instansi Terdisposisi'].apply(clean_agency_name)
+        df['Kecamatan_Clean'] = df['Kecamatan'].apply(clean_kecamatan)
         df['Isi_Laporan'] = df['Isi Laporan Awal'].astype(str)
 
+        # 5. SCORING PRIORITY
         keywords_critical = {'banjir':30, 'kebakaran':40, 'longsor':40, 'kecelakaan':35, 'meninggal':50, 'korban':40}
         keywords_complaint = {'parah':10, 'lambat':5, 'rusak':10, 'bau':10, 'macet':10, 'sampah':10, 'pungli':20}
 
@@ -217,19 +232,52 @@ with tab1:
     with col_g2:
         st.subheader("Instansi Top 5")
         if not df_view.empty:
-            pie_data = df_view[~df_view['Instansi_Clean'].isin(["Umum", "Tidak Diketahui"])]
+            # Filter instansi 'Umum' atau 'Tidak Diketahui'
+            ignore_instansi = ["Umum", "Tidak Diketahui", "Nan", "nan"]
+            pie_data = df_view[~df_view['Instansi_Clean'].isin(ignore_instansi)]
             pie_df = pie_data['Instansi_Clean'].value_counts().head(5).reset_index()
             pie_df.columns = ['Instansi', 'Jumlah']
+            
             fig = px.pie(pie_df, values='Jumlah', names='Instansi', hole=0.4, height=350)
+            fig.update_traces(textinfo='value') 
             fig.update_layout(showlegend=False, margin=dict(t=0,b=0,l=0,r=0))
             st.plotly_chart(fig, use_container_width=True)
     
     st.divider()
     st.subheader("📋 Papan Kontrol: Laporan Dalam Proses")
-    df_kanban = df_view[df_view['Status_Clean'] != 'Selesai'].copy()
     
-    if df_kanban.empty:
-        st.success("Semua laporan sudah selesai! 🎉")
+    # --- FITUR FILTER KANBAN (KATEGORI & KECAMATAN) ---
+    # Siapkan Data Dasar
+    df_kanban_base = df_view[df_view['Status_Clean'] != 'Selesai'].copy()
+    
+    # Ambil Opsi Unik (Sortir alfabetis)
+    opsi_kategori = sorted(df_kanban_base['Kategori_Clean'].dropna().unique().tolist())
+    opsi_kecamatan = sorted(df_kanban_base['Kecamatan_Clean'].dropna().unique().tolist())
+    
+    # Layout Filter
+    col_f1, col_f2 = st.columns(2)
+    with col_f1:
+        pilih_kategori = st.multiselect("🏷️ Filter Kategori:", options=opsi_kategori, placeholder="Pilih Kategori (Bisa banyak)")
+    with col_f2:
+        pilih_kecamatan = st.multiselect("📍 Filter Kecamatan:", options=opsi_kecamatan, placeholder="Pilih Kecamatan (Bisa banyak)")
+    
+    # Logika Filtering
+    df_kanban_filtered = df_kanban_base.copy()
+    
+    if pilih_kategori:
+        df_kanban_filtered = df_kanban_filtered[df_kanban_filtered['Kategori_Clean'].isin(pilih_kategori)]
+        st.caption(f"Menampilkan Kategori: **{', '.join(pilih_kategori)}**")
+        
+    if pilih_kecamatan:
+        df_kanban_filtered = df_kanban_filtered[df_kanban_filtered['Kecamatan_Clean'].isin(pilih_kecamatan)]
+        st.caption(f"Menampilkan Kecamatan: **{', '.join(pilih_kecamatan)}**")
+        
+    if not pilih_kategori and not pilih_kecamatan:
+        st.caption("Menampilkan **SEMUA** data (Default)")
+
+    # Tampilkan Kanban
+    if df_kanban_filtered.empty:
+        st.info("Tidak ada laporan yang sesuai dengan filter Anda.")
     else:
         col_crit, col_warn, col_norm = st.columns(3)
         
@@ -243,25 +291,29 @@ with tab1:
                     <span style="color:{'red' if row['Sisa_Hari'] < 0 else 'black'}">{msg_waktu}</span>
                 </div>
                 <small>📅 {str(row['Tanggal_Parsed'])[:10]}</small><br>
+                <div style="font-size:11px; margin-bottom:4px; color:#555;">📍 {row['Kecamatan_Clean']}</div>
                 <i>"{str(row['Isi_Laporan'])[:50]}..."</i>
             </div>
             """, unsafe_allow_html=True)
             with st.popover("Detail"):
+                st.markdown(f"**Kecamatan:** {row['Kecamatan_Clean']}")
+                st.markdown(f"**Kategori:** {row['Kategori_Clean']}")
+                st.divider()
                 st.write(row['Isi_Laporan'])
 
         with col_crit:
-            st.error("🔴 KRITIS / TERLAMBAT")
-            items = df_kanban[(df_kanban['Label_Prioritas'] == '🔴 CRITICAL') | (df_kanban['Sisa_Hari'] < 0)]
+            st.error(f"🔴 KRITIS ({len(df_kanban_filtered[df_kanban_filtered['Label_Prioritas'] == '🔴 CRITICAL'])})")
+            items = df_kanban_filtered[(df_kanban_filtered['Label_Prioritas'] == '🔴 CRITICAL') | (df_kanban_filtered['Sisa_Hari'] < 0)]
             for _, r in items.head(5).iterrows(): card(r, "#ffebeb")
             
         with col_warn:
-            st.warning("🟡 WARNING")
-            items = df_kanban[(df_kanban['Label_Prioritas'] == '🟡 WARNING') & (df_kanban['Sisa_Hari'] >= 0)]
+            st.warning(f"🟡 WARNING ({len(df_kanban_filtered[df_kanban_filtered['Label_Prioritas'] == '🟡 WARNING'])})")
+            items = df_kanban_filtered[(df_kanban_filtered['Label_Prioritas'] == '🟡 WARNING') & (df_kanban_filtered['Sisa_Hari'] >= 0)]
             for _, r in items.head(5).iterrows(): card(r, "#fff8db")
             
         with col_norm:
-            st.success("🟢 NORMAL")
-            items = df_kanban[(df_kanban['Label_Prioritas'] == '🟢 NORMAL') & (df_kanban['Sisa_Hari'] >= 0)]
+            st.success(f"🟢 NORMAL ({len(df_kanban_filtered[df_kanban_filtered['Label_Prioritas'] == '🟢 NORMAL'])})")
+            items = df_kanban_filtered[(df_kanban_filtered['Label_Prioritas'] == '🟢 NORMAL') & (df_kanban_filtered['Sisa_Hari'] >= 0)]
             for _, r in items.head(5).iterrows(): card(r, "#e6fffa")
             
     st.divider()
@@ -270,15 +322,22 @@ with tab1:
     if not cat_clean.empty:
         top_cat_df = cat_clean['Kategori_Clean'].value_counts().head(10).reset_index()
         top_cat_df.columns = ['Kategori', 'Jumlah']
-        fig_bar = px.bar(top_cat_df, x='Jumlah', y='Kategori', orientation='h', text='Jumlah', color='Jumlah')
+        
+        fig_bar = px.bar(
+            top_cat_df, 
+            x='Jumlah', 
+            y='Kategori', 
+            orientation='h', 
+            text='Jumlah', 
+            color='Jumlah',
+            color_continuous_scale='Blues' 
+        )
         fig_bar.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
         st.plotly_chart(fig_bar, use_container_width=True)
 
 # ================= TAB 2: ACTION CENTER (DENGAN LOGIN) =================
 with tab2:
-    # Cek apakah sudah login?
     if not st.session_state['is_admin']:
-        # TAMPILAN LOGIN FORM
         st.header("🔒 Login Admin")
         st.info("Fitur ini khusus untuk Admin yang berwenang mengubah data.")
         
@@ -295,7 +354,6 @@ with tab2:
                 else:
                     st.error("Email atau Password salah.")
     else:
-        # TAMPILAN ACTION CENTER (JIKA SUDAH LOGIN)
         col_header, col_btn = st.columns([4, 1])
         with col_header:
             st.header("⚡ Action Center: Update Status & Bukti")
@@ -306,7 +364,6 @@ with tab2:
         
         st.success(f"👋 Halo, Admin ({ADMIN_EMAIL})")
         
-        # Dropdown pilih ID (Hanya yang belum selesai)
         df_open = df[df['Status_Clean'] != 'Selesai'].sort_values('Sisa_Hari')
         
         if df_open.empty:
@@ -360,39 +417,54 @@ with tab2:
 
 # ================= TAB 3: PETA =================
 with tab3:
-    st.header("🗺️ Peta Sebaran")
+    st.header("🗺️ Peta Sebaran Laporan")
+    
     gis_csv = "data_gis_kecamatan_improved.csv"
     gis_png = "peta_sebaran_laporan_kecamatan_improved.png"
     
     if os.path.exists(gis_csv):
         df_gis = pd.read_csv(gis_csv)
-        col_a, col_b = st.columns([2, 1])
-        with col_a:
-            if os.path.exists(gis_png):
-                st.image(gis_png, caption="Heatmap Sebaran", use_container_width=True)
-            else:
-                st.info("Peta visual (PNG) tidak tersedia.")
-        with col_b:
-            st.dataframe(df_gis[['kecamatan', 'count']].head(10), use_container_width=True)
         
-        if st.checkbox("Tampilkan Peta Interaktif (Folium)"):
+        # Filter: Hapus 'Tidak Diketahui' dari Peta
+        df_gis = df_gis[~df_gis['kecamatan'].astype(str).str.contains("Tidak Diketahui", case=False)]
+        
+        col_map, col_table = st.columns([2, 1])
+        
+        with col_map:
             try:
                 import folium
                 valid = df_gis.dropna(subset=['lat', 'lon'])
                 if not valid.empty:
-                    m = folium.Map([valid['lat'].mean(), valid['lon'].mean()], zoom_start=10, tiles='CartoDB positron')
+                    m = folium.Map(location=[valid['lat'].mean(), valid['lon'].mean()], zoom_start=10, tiles='CartoDB positron')
                     for _, r in valid.iterrows():
-                        popup_txt = f"{r['kecamatan']}: {r['count']} Laporan"
+                        popup_txt = f"<b>{r['kecamatan']}</b><br>Jumlah: {r['count']}"
                         folium.CircleMarker(
-                            [r['lat'], r['lon']], 
+                            location=[r['lat'], r['lon']], 
                             radius=5 + (r['count']/valid['count'].max()*20), 
-                            color='#2a9d8f', fill=True, 
-                            popup=popup_txt
+                            color='#2a9d8f', fill=True, fill_color='#2a9d8f', fill_opacity=0.7,
+                            popup=folium.Popup(popup_txt, max_width=200)
                         ).add_to(m)
                     components.html(m.get_root().render(), height=500)
-            except: st.error("Install folium: pip install folium")
+                else:
+                    st.warning("Data koordinat tidak valid.")
+            except ImportError:
+                if os.path.exists(gis_png):
+                    st.image(gis_png, caption="Peta Statis", use_container_width=True)
+                else:
+                    st.error("Library 'folium' tidak ditemukan.")
+            except Exception as e:
+                st.error(f"Gagal memuat peta: {e}")
+
+        with col_table:
+            st.subheader("Data Kecamatan")
+            st.dataframe(
+                df_gis[['kecamatan', 'count']].sort_values('count', ascending=False).head(15), 
+                use_container_width=True,
+                hide_index=True
+            )
+            
     else:
-        st.warning("Data GIS tidak ditemukan.")
+        st.warning("Data GIS tidak ditemukan. Jalankan script GIS dulu.")
 
     st.divider()
     with st.expander("📂 Database Lengkap (Tabel)"):
