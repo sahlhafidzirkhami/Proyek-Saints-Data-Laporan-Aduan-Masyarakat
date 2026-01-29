@@ -6,14 +6,90 @@ import time
 import streamlit.components.v1 as components
 from pathlib import Path
 from datetime import datetime, timedelta
+import base64
 
 # --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="Public Insight Engine", layout="wide")
+st.set_page_config(page_title="SP4N LAPOR MONITORING", layout="wide")
 
 # --- KONSTANTA ---
 SLA_HARI = 5
 ADMIN_EMAIL = "admin@example.com"
 ADMIN_PASS = "admin123"
+
+def icon(path, size=20):
+    with open(path, "rb") as f:
+        data = base64.b64encode(f.read()).decode()
+
+    return f"""
+        <img 
+            src="data:image/png;base64,{data}"
+            width="{size}"
+            height="{size}"
+            style="vertical-align:middle; margin-right:6px;"
+        >
+    """
+
+def section(gap=6):
+    st.markdown(
+        f"<div style='height:{gap}px;'></div>",
+        unsafe_allow_html=True
+    )
+
+def icon_title(path, text, size=28):
+    with open(path, "rb") as f:
+        data = base64.b64encode(f.read()).decode()
+
+    return f"""
+    <div style="
+        display:flex;
+        align-items:center;
+        gap:10px;
+    ">
+        <img 
+            src="data:image/png;base64,{data}"
+            width="{size}"
+            height="{size}"
+            style="display:block;"
+        >
+        <span style="
+            font-size:32px;
+            font-weight:700;
+            line-height:1;
+        ">
+            {text}
+        </span>
+    </div>
+    """
+
+def kpi(icon_path, title, value):
+    with open(icon_path, "rb") as f:
+        icon_data = base64.b64encode(f.read()).decode()
+
+    return f"""
+    <div style="
+        padding:16px 18px;
+    ">
+        <div style="
+            display:flex;
+            align-items:center;
+            gap:8px;
+            font-size:15px;
+            font-weight:600;
+            opacity:0.85;
+        ">
+            <img src="data:image/png;base64,{icon_data}" width="18">
+            <span>{title}</span>
+        </div>
+
+        <div style="
+            margin-top:8px;
+            font-size:34px;
+            font-weight:700;
+        ">
+            {value}
+        </div>
+    </div>
+    """
 
 # --- FUNGSI PEMBERSIHAN ---
 def clean_category_name(text):
@@ -185,33 +261,73 @@ if df.empty:
 if 'is_admin' not in st.session_state:
     st.session_state['is_admin'] = False
 
-# Sidebar Filter
-st.sidebar.title("🎛️ Panel Kontrol")
-years = sorted(df['Tahun'].dropna().astype(int).unique().tolist(), reverse=True)
-sel_year = st.sidebar.selectbox("Tahun:", ["Semua Tahun"] + years)
-df_view = df if sel_year == "Semua Tahun" else df[df['Tahun'] == sel_year]
+# ================= SIDEBAR =================
+LOGO_PATH = "assets/img/pemkab.png"  
+
+with st.sidebar:
+    # LOGO
+    if Path(LOGO_PATH).exists():
+        col1, col2, col3 = st.columns([1,5,1])
+        with col2:
+            st.image(LOGO_PATH, width=200)
+
+    # JUDUL SIDEBAR
+    st.markdown("""
+    <h2 style='text-align: center; color: #2A9D8F; margin-top:-10px;'>SP4N LAPOR</h2>
+    <p style='text-align: center; font-size: 14px; color: gray; margin-bottom: 20px;'>Dashboard Monitoring</p>
+    """, unsafe_allow_html=True)
+
+    st.divider()
+
+    # FILTER
+    years = sorted(df['Tahun'].dropna().astype(int).unique().tolist(), reverse=True)
+    st.markdown(
+        icon("assets/img/calendar.png", 18) + "<b>Filter Tahun</b>",
+        unsafe_allow_html=True
+    )
+    sel_year = st.selectbox("", ["Semua Tahun"] + years)
+    df_view = df if sel_year == "Semua Tahun" else df[df['Tahun'] == sel_year]
 
 # --- TABS UTAMA ---
-tab1, tab2, tab3 = st.tabs(["📊 Dashboard & Reminder", "⚡ Action Center (Admin)", "🗺️ Peta Sebaran"])
+tab1, tab2, tab3 = st.tabs([" Dashboard & Reminder", " Admin", " Peta Sebaran"])
 
 # ================= TAB 1: DASHBOARD =================
 with tab1:
-    st.title(f"Monitoring Laporan ({sel_year})")
+    st.markdown(
+        icon_title(
+            "assets/img/analytics.png",
+            f"Monitoring Laporan ({sel_year})",
+            size=30
+        ),
+        unsafe_allow_html=True
+    )
+    st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
     
+    # --- UPGRADE: KPI dengan Ikon ---
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total Laporan", len(df_view))
-    
+        
     overdue = len(df_view[(df_view['Sisa_Hari'] < 0) & (df_view['Status_Clean'] != 'Selesai')])
-    c2.metric("🔥 Overdue (Terlambat)", overdue, delta_color="inverse")
-    
     selesai = len(df_view[df_view['Status_Clean'] == 'Selesai'])
     persen = (selesai/len(df_view)*100) if len(df_view) > 0 else 0
-    c3.metric("Tingkat Penyelesaian", f"{persen:.1f}%")
-    
     noise = ["Tidak Diketahui", "Lainnya"]
     valid_cat = df_view[~df_view['Kategori_Clean'].isin(noise)]
     top_isu = valid_cat['Kategori_Clean'].mode()[0] if not valid_cat.empty else "-"
-    c4.metric("Isu Terbanyak", top_isu)
+    
+    with c1:
+        st.markdown(icon("assets/img/report.png") + "<b>Total Laporan</b>", unsafe_allow_html=True)
+        st.metric("", len(df_view))
+
+    with c2:
+        st.markdown(icon("assets/img/overdue.png") + "<b>Overdue (Terlambat)</b>", unsafe_allow_html=True)
+        st.metric("", overdue, delta_color="inverse")
+
+    with c3:
+        st.markdown(icon("assets/img/check.png") + "<b>Tingkat Penyelesaian</b>", unsafe_allow_html=True)
+        st.metric("", f"{persen:.1f}%")
+
+    with c4:
+        st.markdown(icon("assets/img/issue.png") + "<b>Isu Terbanyak</b>", unsafe_allow_html=True)
+        st.metric("", top_isu)
     
     if top_isu != "-":
         with st.expander(f"🧐 Bedah Isu: Apa isi laporan '{top_isu}'?"):
@@ -223,16 +339,30 @@ with tab1:
 
     col_g1, col_g2 = st.columns([2, 1])
     with col_g1:
-        st.subheader("Tren Laporan")
+        st.markdown(
+            icon_title(
+                "assets/img/trend.png",
+                "Tren Laporan Masuk",
+                size=24
+            ),
+            unsafe_allow_html=True
+        )
         if not df_view.empty:
             trend = df_view.groupby('Bulan').size().reset_index(name='Jumlah')
             fig = px.line(trend, x='Bulan', y='Jumlah', markers=True, template='plotly_white', height=350)
             st.plotly_chart(fig, use_container_width=True)
             
     with col_g2:
-        st.subheader("Instansi Top 5")
+        st.markdown(
+            icon_title(
+                "assets/img/pie-chart.png",
+                "Instansi Top 5",
+                size=24
+            ),
+            unsafe_allow_html=True
+        )
+        st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
         if not df_view.empty:
-            # Filter instansi 'Umum' atau 'Tidak Diketahui'
             ignore_instansi = ["Umum", "Tidak Diketahui", "Nan", "nan"]
             pie_data = df_view[~df_view['Instansi_Clean'].isin(ignore_instansi)]
             pie_df = pie_data['Instansi_Clean'].value_counts().head(5).reset_index()
@@ -242,26 +372,43 @@ with tab1:
             fig.update_traces(textinfo='value') 
             fig.update_layout(showlegend=False, margin=dict(t=0,b=0,l=0,r=0))
             st.plotly_chart(fig, use_container_width=True)
-    
+            
     st.divider()
-    st.subheader("📋 Papan Kontrol: Laporan Dalam Proses")
+    st.markdown(
+        icon_title(
+            "assets/img/kanban.png",
+            "Papan Kontrol: Laporan Dalam Proses",
+            size=26
+        ),
+        unsafe_allow_html=True
+    )
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
     
     # --- FITUR FILTER KANBAN (KATEGORI & KECAMATAN) ---
-    # Siapkan Data Dasar
     df_kanban_base = df_view[df_view['Status_Clean'] != 'Selesai'].copy()
     
-    # Ambil Opsi Unik (Sortir alfabetis)
     opsi_kategori = sorted(df_kanban_base['Kategori_Clean'].dropna().unique().tolist())
     opsi_kecamatan = sorted(df_kanban_base['Kecamatan_Clean'].dropna().unique().tolist())
     
-    # Layout Filter
     col_f1, col_f2 = st.columns(2)
     with col_f1:
-        pilih_kategori = st.multiselect("🏷️ Filter Kategori:", options=opsi_kategori, placeholder="Pilih Kategori (Bisa banyak)")
+        st.markdown(
+            icon("assets/img/category.png") + "<b>Filter Kategori</b>",
+            unsafe_allow_html=True
+        )
+        pilih_kategori = st.multiselect(
+            label="Filter Kategori",
+            options=opsi_kategori,
+            label_visibility="collapsed"
+        )
     with col_f2:
-        pilih_kecamatan = st.multiselect("📍 Filter Kecamatan:", options=opsi_kecamatan, placeholder="Pilih Kecamatan (Bisa banyak)")
-    
-    # Logika Filtering
+        st.markdown(
+            icon("assets/img/location.png") + "<b>Filter Kecamatan</b>", unsafe_allow_html=True)
+        pilih_kecamatan = st.multiselect(
+            label="Filter Kecamatan",
+            options=opsi_kecamatan,
+            label_visibility="collapsed"
+        )
     df_kanban_filtered = df_kanban_base.copy()
     
     if pilih_kategori:
@@ -273,7 +420,7 @@ with tab1:
         st.caption(f"Menampilkan Kecamatan: **{', '.join(pilih_kecamatan)}**")
         
     if not pilih_kategori and not pilih_kecamatan:
-        st.caption("Menampilkan **SEMUA** data (Default)")
+        st.caption("Menampilkan **SEMUA** data")
 
     # Tampilkan Kanban
     if df_kanban_filtered.empty:
@@ -281,21 +428,32 @@ with tab1:
     else:
         col_crit, col_warn, col_norm = st.columns(3)
         
+        # --- UPGRADE: KARTU KANBAN DENGAN CSS SHADOW ---
         def card(row, color):
-            border = "5px solid red" if row['Sisa_Hari'] < 0 else f"1px solid {color}"
+            border = "5px solid red" if row['Sisa_Hari'] < 0 else "0px"
             msg_waktu = f"🔥 Telat {abs(row['Sisa_Hari'])} hari" if row['Sisa_Hari'] < 0 else f"⏳ Sisa {row['Sisa_Hari']} hari"
+            
             st.markdown(f"""
-            <div style="background:{color}; padding:10px; border-radius:5px; border-left:{border}; margin-bottom:10px; color:black;">
-                <div style="display:flex; justify-content:space-between; font-weight:bold;">
-                    <span>ID: {row['Tracking ID']}</span>
-                    <span style="color:{'red' if row['Sisa_Hari'] < 0 else 'black'}">{msg_waktu}</span>
+            <div style="
+                background-color: {color}; 
+                padding: 15px; 
+                border-radius: 10px; 
+                border-left: {border}; 
+                margin-bottom: 12px; 
+                color: #333;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                border: 1px solid rgba(0,0,0,0.05);
+            ">
+                <div style="display:flex; justify-content:space-between; font-weight:bold; margin-bottom:5px;">
+                    <span style="background-color:rgba(255,255,255,0.7); padding:2px 6px; border-radius:4px; font-size:12px;">ID: {row['Tracking ID']}</span>
+                    <span style="color:{'red' if row['Sisa_Hari'] < 0 else '#555'}; font-size:12px;">{msg_waktu}</span>
                 </div>
-                <small>📅 {str(row['Tanggal_Parsed'])[:10]}</small><br>
-                <div style="font-size:11px; margin-bottom:4px; color:#555;">📍 {row['Kecamatan_Clean']}</div>
-                <i>"{str(row['Isi_Laporan'])[:50]}..."</i>
+                <small style="color:#666;">📅 {str(row['Tanggal_Parsed'])[:10]}</small><br>
+                <div style="font-size:11px; margin-top:2px; margin-bottom:4px; color:#2A9D8F; font-weight:bold;">📍 {row['Kecamatan_Clean']}</div>
+                <i style="font-size:13px; line-height:1.4;">"{str(row['Isi_Laporan'])[:65]}..."</i>
             </div>
             """, unsafe_allow_html=True)
-            with st.popover("Detail"):
+            with st.popover("📖 Baca Selengkapnya"):
                 st.markdown(f"**Kecamatan:** {row['Kecamatan_Clean']}")
                 st.markdown(f"**Kategori:** {row['Kategori_Clean']}")
                 st.divider()
@@ -317,7 +475,14 @@ with tab1:
             for _, r in items.head(5).iterrows(): card(r, "#e6fffa")
             
     st.divider()
-    st.subheader("Top 10 Kategori Masalah (Valid)")
+    st.markdown(
+        icon_title(
+            "assets/img/bar.png",
+            "Top 10 Kategori Masalah",
+            size=24
+        ),
+        unsafe_allow_html=True
+    )
     cat_clean = df_view[~df_view['Kategori_Clean'].isin(noise)]
     if not cat_clean.empty:
         top_cat_df = cat_clean['Kategori_Clean'].value_counts().head(10).reset_index()
@@ -338,7 +503,15 @@ with tab1:
 # ================= TAB 2: ACTION CENTER (DENGAN LOGIN) =================
 with tab2:
     if not st.session_state['is_admin']:
-        st.header("🔒 Login Admin")
+        st.markdown(
+            icon_title(
+                "assets/img/profile.png",
+                "Login Admin",
+                size=26
+            ),
+            unsafe_allow_html=True
+        )
+        st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
         st.info("Fitur ini khusus untuk Admin yang berwenang mengubah data.")
         
         with st.form("login_form"):
@@ -356,7 +529,14 @@ with tab2:
     else:
         col_header, col_btn = st.columns([4, 1])
         with col_header:
-            st.header("⚡ Action Center: Update Status & Bukti")
+            st.markdown(
+                icon_title(
+                    "assets/img/action.png",
+                    "Admin Center: Update Status & Bukti",
+                    size=26
+                ),
+                unsafe_allow_html=True
+            )
         with col_btn:
             if st.button("Logout"):
                 st.session_state['is_admin'] = False
@@ -395,7 +575,7 @@ with tab2:
                 with st.form("form_update"):
                     st.write(f"Menindaklanjuti Laporan ID: **{pilihan}**")
                     bukti_input = st.text_area("📝 Bukti Penyelesaian (Wajib Diisi):", 
-                                               placeholder="Jelaskan tindakan yang diambil...")
+                        placeholder="Jelaskan tindakan yang diambil...")
                     konfirmasi = st.checkbox("Saya menyatakan laporan ini selesai ditangani.")
                     tombol = st.form_submit_button("💾 Simpan & Tandai Selesai", type="primary")
                     
@@ -408,8 +588,10 @@ with tab2:
                             with st.spinner("Menyimpan ke database..."):
                                 sukses, pesan = update_laporan(pilihan, bukti_input)
                                 if sukses:
-                                    st.success(pesan)
-                                    time.sleep(1.5)
+                                    # --- UPGRADE: ANIMASI BALON SUKSES ---
+                                    st.balloons()
+                                    st.success("✅ KERJA BAGUS! " + pesan)
+                                    time.sleep(2)
                                     st.cache_data.clear()
                                     st.rerun()
                                 else:
@@ -417,7 +599,15 @@ with tab2:
 
 # ================= TAB 3: PETA =================
 with tab3:
-    st.header("🗺️ Peta Sebaran Laporan")
+    st.markdown(
+    icon_title(
+        "assets/img/map.png",
+        "Peta Sebaran Laporan per Kecamatan",
+        size=26
+    ),
+    unsafe_allow_html=True
+)
+    st.caption("Visualisasi sebaran aduan masyarakat berdasarkan wilayah kecamatan.")
     
     gis_csv = "data_gis_kecamatan_improved.csv"
     gis_png = "peta_sebaran_laporan_kecamatan_improved.png"
@@ -425,8 +615,8 @@ with tab3:
     if os.path.exists(gis_csv):
         df_gis = pd.read_csv(gis_csv)
         
-        # Filter: Hapus 'Tidak Diketahui' dari Peta
-        df_gis = df_gis[~df_gis['kecamatan'].astype(str).str.contains("Tidak Diketahui", case=False)]
+        # --- FILTER: Hapus kecamatan 'Tidak Diketahui' dari Peta & Tabel ---
+        df_gis = df_gis[~df_gis['kecamatan'].str.contains("Tidak Diketahui", case=False, na=False)]
         
         col_map, col_table = st.columns([2, 1])
         
@@ -437,35 +627,40 @@ with tab3:
                 if not valid.empty:
                     m = folium.Map(location=[valid['lat'].mean(), valid['lon'].mean()], zoom_start=10, tiles='CartoDB positron')
                     for _, r in valid.iterrows():
-                        popup_txt = f"<b>{r['kecamatan']}</b><br>Jumlah: {r['count']}"
+                        popup_txt = f"<b>{r['kecamatan']}</b><br>Jumlah Laporan: {r['count']}"
                         folium.CircleMarker(
-                            location=[r['lat'], r['lon']], 
-                            radius=5 + (r['count']/valid['count'].max()*20), 
+                            [r['lat'], r['lon']], 
+                            radius=5 + (r['count']/valid['count'].max()*20),
                             color='#2a9d8f', fill=True, fill_color='#2a9d8f', fill_opacity=0.7,
                             popup=folium.Popup(popup_txt, max_width=200)
                         ).add_to(m)
                     components.html(m.get_root().render(), height=500)
                 else:
-                    st.warning("Data koordinat tidak valid.")
+                    st.warning("Data koordinat kosong.")
             except ImportError:
                 if os.path.exists(gis_png):
-                    st.image(gis_png, caption="Peta Statis", use_container_width=True)
+                    st.image(gis_png, caption="Peta Sebaran Laporan (Statis)", use_container_width=True)
                 else:
-                    st.error("Library 'folium' tidak ditemukan.")
+                    st.info("Visualisasi peta tidak dapat dimuat.")
             except Exception as e:
                 st.error(f"Gagal memuat peta: {e}")
-
+                
         with col_table:
             st.subheader("Data Kecamatan")
             st.dataframe(
                 df_gis[['kecamatan', 'count']].sort_values('count', ascending=False).head(15), 
-                use_container_width=True,
+                use_container_width=True, 
                 hide_index=True
             )
             
     else:
-        st.warning("Data GIS tidak ditemukan. Jalankan script GIS dulu.")
+        st.warning("Data GIS tidak ditemukan. Pastikan file 'data_gis_kecamatan_improved.csv' ada di folder proyek.")
 
     st.divider()
-    with st.expander("📂 Database Lengkap (Tabel)"):
+    # with st.expander("📂 Data Lengkap (Tabel)"):
+    st.markdown(
+        icon("assets/img/folder.png") + "<b>Data Lengkap</b>",
+        unsafe_allow_html=True
+    )
+    with st.expander(""):
         st.dataframe(df_view)
