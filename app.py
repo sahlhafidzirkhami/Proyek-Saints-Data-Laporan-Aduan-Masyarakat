@@ -1,12 +1,14 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import os
 import time
 import streamlit.components.v1 as components
 from pathlib import Path
 from datetime import datetime, timedelta
 import base64
+import numpy as np
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="SP4N LAPOR MONITORING", layout="wide")
@@ -17,77 +19,51 @@ ADMIN_EMAIL = "admin@example.com"
 ADMIN_PASS = "admin123"
 
 def icon(path, size=20):
-    with open(path, "rb") as f:
-        data = base64.b64encode(f.read()).decode()
-
-    return f"""
-        <img 
-            src="data:image/png;base64,{data}"
-            width="{size}"
-            height="{size}"
-            style="vertical-align:middle; margin-right:6px;"
-        >
-    """
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            data = base64.b64encode(f.read()).decode()
+        return f"""
+            <img 
+                src="data:image/png;base64,{data}"
+                width="{size}"
+                height="{size}"
+                style="vertical-align:middle; margin-right:6px;"
+            >
+        """
+    return ""
 
 def section(gap=6):
-    st.markdown(
-        f"<div style='height:{gap}px;'></div>",
-        unsafe_allow_html=True
-    )
+    st.markdown(f"<div style='height:{gap}px;'></div>", unsafe_allow_html=True)
 
 def icon_title(path, text, size=28):
-    with open(path, "rb") as f:
-        data = base64.b64encode(f.read()).decode()
-
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            data = base64.b64encode(f.read()).decode()
+        img_html = f'<img src="data:image/png;base64,{data}" width="{size}" height="{size}" style="display:block;">'
+    else:
+        img_html = ""
+    
     return f"""
-    <div style="
-        display:flex;
-        align-items:center;
-        gap:10px;
-    ">
-        <img 
-            src="data:image/png;base64,{data}"
-            width="{size}"
-            height="{size}"
-            style="display:block;"
-        >
-        <span style="
-            font-size:32px;
-            font-weight:700;
-            line-height:1;
-        ">
-            {text}
-        </span>
+    <div style="display:flex; align-items:center; gap:10px;">
+        {img_html}
+        <span style="font-size:32px; font-weight:700; line-height:1;">{text}</span>
     </div>
     """
 
 def kpi(icon_path, title, value):
-    with open(icon_path, "rb") as f:
-        icon_data = base64.b64encode(f.read()).decode()
+    if os.path.exists(icon_path):
+        with open(icon_path, "rb") as f:
+            icon_data = base64.b64encode(f.read()).decode()
+        img_html = f'<img src="data:image/png;base64,{icon_data}" width="18">'
+    else:
+        img_html = ""
 
     return f"""
-    <div style="
-        padding:16px 18px;
-    ">
-        <div style="
-            display:flex;
-            align-items:center;
-            gap:8px;
-            font-size:15px;
-            font-weight:600;
-            opacity:0.85;
-        ">
-            <img src="data:image/png;base64,{icon_data}" width="18">
-            <span>{title}</span>
+    <div style="padding:16px 18px;">
+        <div style="display:flex; align-items:center; gap:8px; font-size:15px; font-weight:600; opacity:0.85;">
+            {img_html}<span>{title}</span>
         </div>
-
-        <div style="
-            margin-top:8px;
-            font-size:34px;
-            font-weight:700;
-        ">
-            {value}
-        </div>
+        <div style="margin-top:8px; font-size:34px; font-weight:700;">{value}</div>
     </div>
     """
 
@@ -95,7 +71,6 @@ def kpi(icon_path, title, value):
 def clean_category_name(text):
     if pd.isna(text) or str(text).strip() in ["-", "", "nan"]: return "Tidak Diketahui"
     text = str(text).strip()
-    # Hapus prefix standar agar lebih pendek
     for prefix in ["Lainnya terkait ", "Permintaan Informasi ", "Pengaduan ", "Aspirasi "]:
         text = text.replace(prefix, "")
     return text
@@ -138,7 +113,6 @@ def load_data():
         else:
             df = pd.read_csv(file_path)
 
-        # 1. MAPPING KOLOM
         col_map = {
             'tanggal_masuk': 'Tanggal Laporan Masuk',
             'kategori': 'Kategori',
@@ -147,16 +121,14 @@ def load_data():
             'isi_laporan_akhir': 'Isi Laporan Akhir', 
             'tracking_id': 'Tracking ID',
             'status_final': 'Status Final',
-            'kecamatan_final': 'Kecamatan' # Mapping kolom kecamatan
+            'kecamatan_final': 'Kecamatan'
         }
         df.rename(columns=col_map, inplace=True)
         
-        # 2. VALIDASI KOLOM WAJIB
         required = ['Tanggal Laporan Masuk', 'Kategori', 'Isi Laporan Awal', 'Status Final']
         for c in required:
             if c not in df.columns: df[c] = "-"
 
-        # 3. HANDLING TRACKING ID (STRING)
         if 'Tracking ID' not in df.columns: 
             df['Tracking ID'] = df.index.astype(str)
         else:
@@ -165,7 +137,6 @@ def load_data():
         if 'Isi Laporan Akhir' not in df.columns: df['Isi Laporan Akhir'] = "-"
         if 'Kecamatan' not in df.columns: df['Kecamatan'] = "Tidak Diketahui"
 
-        # 4. DATA CLEANING
         df['Status_Clean'] = df['Status Final'].astype(str).str.title().str.strip()
         df['Status_Clean'] = df['Status_Clean'].replace(['Nan', 'nan', '-', ''], 'Diproses')
 
@@ -173,7 +144,6 @@ def load_data():
         df['Tahun'] = df['Tanggal_Parsed'].dt.year
         df['Bulan'] = df['Tanggal_Parsed'].dt.to_period('M').astype(str)
         
-        # SLA Calculation
         df['Target_Selesai'] = df['Tanggal_Parsed'] + pd.Timedelta(days=SLA_HARI)
         today = pd.Timestamp.now()
         df['Sisa_Hari'] = (df['Target_Selesai'] - today).dt.days
@@ -186,32 +156,39 @@ def load_data():
             
         df['Status_Waktu'] = df.apply(get_time_status, axis=1)
 
-        # Cleaning Kategori & Instansi & Kecamatan
         df['Kategori_Clean'] = df['Kategori'].apply(clean_category_name)
         df['Instansi_Clean'] = df['Instansi Terdisposisi'].apply(clean_agency_name)
         df['Kecamatan_Clean'] = df['Kecamatan'].apply(clean_kecamatan)
         df['Isi_Laporan'] = df['Isi Laporan Awal'].astype(str)
 
-        # 5. SCORING PRIORITY
+        # 5. SCORING PRIORITY & SENTIMENT
         keywords_critical = {'banjir':30, 'kebakaran':40, 'longsor':40, 'kecelakaan':35, 'meninggal':50, 'korban':40}
         keywords_complaint = {'parah':10, 'lambat':5, 'rusak':10, 'bau':10, 'macet':10, 'sampah':10, 'pungli':20}
+        negative_words = ['parah', 'kecewa', 'lambat', 'rusak', 'bau', 'macet', 'pungli', 'bodoh', 'malas', 'susah', 'emosi', 'lama', 'ribet']
 
         def calculate_priority(row):
             text = str(row['Isi_Laporan']).lower()
             score = 0
+            sentiment_score = 1
+            
             for w, v in keywords_critical.items(): 
                 if w in text: score += v
             for w, v in keywords_complaint.items(): 
                 if w in text: score += v
             
+            for w in negative_words:
+                if w in text: sentiment_score += 0.5
+            
             if row['Sisa_Hari'] < 0 and row['Status_Clean'] != 'Selesai':
                 score += 50 
+                sentiment_score += 1
             
             final = min(score, 100)
+            final_sent = min(sentiment_score, 5)
             label = "🔴 CRITICAL" if final >= 50 else "🟡 WARNING" if final >= 20 else "🟢 NORMAL"
-            return pd.Series([final, label])
+            return pd.Series([final, label, final_sent])
 
-        df[['Final_Score', 'Label_Prioritas']] = df.apply(calculate_priority, axis=1)
+        df[['Final_Score', 'Label_Prioritas', 'Sentiment_Score']] = df.apply(calculate_priority, axis=1)
         return df
 
     except Exception as e:
@@ -250,6 +227,47 @@ def update_laporan(tracking_id, bukti_text):
     except Exception as e:
         return False, str(e)
 
+# --- FUNGSI AI INSIGHT GENERATOR ---
+def generate_ai_insight(df, year):
+    total = len(df)
+    if total == 0: return "Data tidak tersedia."
+    
+    overdue = len(df[(df['Sisa_Hari'] < 0) & (df['Status_Clean'] != 'Selesai')])
+    selesai = len(df[df['Status_Clean'] == 'Selesai'])
+    rate = (selesai/total)*100 if total > 0 else 0
+    
+    # --- FILTER NOISE AGAR TIDAK MUNCUL DI AI ---
+    noise_list = ["Tidak Diketahui", "Lainnya", "Nan", "nan", "-"]
+    try:
+        valid_issues = df[~df['Kategori_Clean'].isin(noise_list)]
+        if not valid_issues.empty:
+            top_isu = valid_issues['Kategori_Clean'].mode()[0]
+        else:
+            top_isu = "-"
+    except:
+        top_isu = "-"
+        
+    avg_sent = df['Sentiment_Score'].mean()
+    status_emosi = "Sangat Tidak Puas 😡" if avg_sent > 4.5 else "Tidak Puas 😠" if avg_sent > 3.5 else "Netral 😐" if avg_sent > 2.5 else "Puas 🙂" if avg_sent > 1.5 else "Sangat Puas 😄"
+    
+    insight = f"""
+    Laporan Eksekutif AI (Tahun {year}):
+    
+    Kinerja penyelesaian laporan tercatat sebesar {rate:.1f}%. 
+    Terdapat {overdue} laporan terlambat yang berpotensi menurunkan kepercayaan publik.
+    
+    Isu Dominan:
+    Keluhan terbanyak berkaitan dengan "{top_isu}".
+    
+    Sentimen Publik:
+    Analisis bahasa mendeteksi emosi warga: {status_emosi}.
+    
+    Rekomendasi Tindakan:
+    1. Prioritaskan penanganan {overdue} kasus yang sudah melewati SLA.
+    2. Lakukan sosialisasi preventif terkait "{top_isu}".
+    """
+    return insight
+
 # --- MAIN APP ---
 df = load_data()
 
@@ -265,13 +283,11 @@ if 'is_admin' not in st.session_state:
 LOGO_PATH = "assets/img/pemkab.png"  
 
 with st.sidebar:
-    # LOGO
     if Path(LOGO_PATH).exists():
         col1, col2, col3 = st.columns([1,5,1])
         with col2:
             st.image(LOGO_PATH, width=200)
 
-    # JUDUL SIDEBAR
     st.markdown("""
     <h2 style='text-align: center; color: #2A9D8F; margin-top:-10px;'>SP4N LAPOR</h2>
     <p style='text-align: center; font-size: 14px; color: gray; margin-bottom: 20px;'>Dashboard Monitoring</p>
@@ -279,7 +295,6 @@ with st.sidebar:
 
     st.divider()
 
-    # FILTER
     years = sorted(df['Tahun'].dropna().astype(int).unique().tolist(), reverse=True)
     st.markdown(
         icon("assets/img/calendar.png", 18) + "<b>Filter Tahun</b>",
@@ -289,21 +304,16 @@ with st.sidebar:
     df_view = df if sel_year == "Semua Tahun" else df[df['Tahun'] == sel_year]
 
 # --- TABS UTAMA ---
-tab1, tab2, tab3 = st.tabs([" Dashboard & Reminder", " Admin", " Peta Sebaran"])
+tab1, tab2, tab3, tab4 = st.tabs([" Dashboard & Reminder", " Admin", " Peta Sebaran", " AI Insight"])
 
 # ================= TAB 1: DASHBOARD =================
 with tab1:
     st.markdown(
-        icon_title(
-            "assets/img/analytics.png",
-            f"Monitoring Laporan ({sel_year})",
-            size=30
-        ),
+        icon_title("assets/img/analytics.png", f"Monitoring Laporan ({sel_year})", size=30),
         unsafe_allow_html=True
     )
     st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
     
-    # --- UPGRADE: KPI dengan Ikon ---
     c1, c2, c3, c4 = st.columns(4)
         
     overdue = len(df_view[(df_view['Sisa_Hari'] < 0) & (df_view['Status_Clean'] != 'Selesai')])
@@ -339,287 +349,156 @@ with tab1:
 
     col_g1, col_g2 = st.columns([2, 1])
     with col_g1:
-        st.markdown(
-            icon_title(
-                "assets/img/trend.png",
-                "Tren Laporan Masuk",
-                size=24
-            ),
-            unsafe_allow_html=True
-        )
+        st.markdown(icon_title("assets/img/trend.png", "Tren Laporan Masuk", size=24), unsafe_allow_html=True)
         if not df_view.empty:
             trend = df_view.groupby('Bulan').size().reset_index(name='Jumlah')
             fig = px.line(trend, x='Bulan', y='Jumlah', markers=True, template='plotly_white', height=350)
             st.plotly_chart(fig, use_container_width=True)
             
     with col_g2:
-        st.markdown(
-            icon_title(
-                "assets/img/pie-chart.png",
-                "Instansi Top 5",
-                size=24
-            ),
-            unsafe_allow_html=True
-        )
+        st.markdown(icon_title("assets/img/pie-chart.png", "Instansi Top 5", size=24), unsafe_allow_html=True)
         st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
         if not df_view.empty:
             ignore_instansi = ["Umum", "Tidak Diketahui", "Nan", "nan"]
             pie_data = df_view[~df_view['Instansi_Clean'].isin(ignore_instansi)]
             pie_df = pie_data['Instansi_Clean'].value_counts().head(5).reset_index()
             pie_df.columns = ['Instansi', 'Jumlah']
-            
             fig = px.pie(pie_df, values='Jumlah', names='Instansi', hole=0.4, height=350)
             fig.update_traces(textinfo='value') 
             fig.update_layout(showlegend=False, margin=dict(t=0,b=0,l=0,r=0))
             st.plotly_chart(fig, use_container_width=True)
             
     st.divider()
-    st.markdown(
-        icon_title(
-            "assets/img/kanban.png",
-            "Papan Kontrol: Laporan Dalam Proses",
-            size=26
-        ),
-        unsafe_allow_html=True
-    )
+    st.markdown(icon_title("assets/img/kanban.png", "Papan Kontrol: Laporan Dalam Proses", size=26), unsafe_allow_html=True)
     st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
     
-    # --- FITUR FILTER KANBAN (KATEGORI & KECAMATAN) ---
     df_kanban_base = df_view[df_view['Status_Clean'] != 'Selesai'].copy()
-    
-    opsi_kategori = sorted(df_kanban_base['Kategori_Clean'].dropna().unique().tolist())
-    opsi_kecamatan = sorted(df_kanban_base['Kecamatan_Clean'].dropna().unique().tolist())
     
     col_f1, col_f2 = st.columns(2)
     with col_f1:
-        st.markdown(
-            icon("assets/img/category.png") + "<b>Filter Kategori</b>",
-            unsafe_allow_html=True
-        )
-        pilih_kategori = st.multiselect(
-            label="Filter Kategori",
-            options=opsi_kategori,
-            label_visibility="collapsed"
-        )
+        st.markdown(icon("assets/img/category.png") + "<b>Filter Kategori</b>", unsafe_allow_html=True)
+        pilih_kategori = st.multiselect("label1", sorted(df_kanban_base['Kategori_Clean'].dropna().unique()), label_visibility="collapsed")
     with col_f2:
-        st.markdown(
-            icon("assets/img/location.png") + "<b>Filter Kecamatan</b>", unsafe_allow_html=True)
-        pilih_kecamatan = st.multiselect(
-            label="Filter Kecamatan",
-            options=opsi_kecamatan,
-            label_visibility="collapsed"
-        )
-    df_kanban_filtered = df_kanban_base.copy()
+        st.markdown(icon("assets/img/location.png") + "<b>Filter Kecamatan</b>", unsafe_allow_html=True)
+        pilih_kecamatan = st.multiselect("label2", sorted(df_kanban_base['Kecamatan_Clean'].dropna().unique()), label_visibility="collapsed")
     
-    if pilih_kategori:
-        df_kanban_filtered = df_kanban_filtered[df_kanban_filtered['Kategori_Clean'].isin(pilih_kategori)]
-        st.caption(f"Menampilkan Kategori: **{', '.join(pilih_kategori)}**")
-        
-    if pilih_kecamatan:
-        df_kanban_filtered = df_kanban_filtered[df_kanban_filtered['Kecamatan_Clean'].isin(pilih_kecamatan)]
-        st.caption(f"Menampilkan Kecamatan: **{', '.join(pilih_kecamatan)}**")
-        
-    if not pilih_kategori and not pilih_kecamatan:
-        st.caption("Menampilkan **SEMUA** data")
+    df_kanban_filtered = df_kanban_base.copy()
+    if pilih_kategori: df_kanban_filtered = df_kanban_filtered[df_kanban_filtered['Kategori_Clean'].isin(pilih_kategori)]
+    if pilih_kecamatan: df_kanban_filtered = df_kanban_filtered[df_kanban_filtered['Kecamatan_Clean'].isin(pilih_kecamatan)]
 
-    # Tampilkan Kanban
     if df_kanban_filtered.empty:
         st.info("Tidak ada laporan yang sesuai dengan filter Anda.")
     else:
         col_crit, col_warn, col_norm = st.columns(3)
-        
-        # --- UPGRADE: KARTU KANBAN DENGAN CSS SHADOW ---
         def card(row, color):
             border = "5px solid red" if row['Sisa_Hari'] < 0 else "0px"
             msg_waktu = f"🔥 Telat {abs(row['Sisa_Hari'])} hari" if row['Sisa_Hari'] < 0 else f"⏳ Sisa {row['Sisa_Hari']} hari"
-            
             st.markdown(f"""
-            <div style="
-                background-color: {color}; 
-                padding: 15px; 
-                border-radius: 10px; 
-                border-left: {border}; 
-                margin-bottom: 12px; 
-                color: #333;
-                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-                border: 1px solid rgba(0,0,0,0.05);
-            ">
+            <div style="background-color: {color}; padding: 15px; border-radius: 10px; border-left: {border}; margin-bottom: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
                 <div style="display:flex; justify-content:space-between; font-weight:bold; margin-bottom:5px;">
-                    <span style="background-color:rgba(255,255,255,0.7); padding:2px 6px; border-radius:4px; font-size:12px;">ID: {row['Tracking ID']}</span>
+                    <span style="background-color:rgba(255,255,255,0.7); padding:2px 6px; border-radius:4px; font-size:12px; color:#333333;">ID: {row['Tracking ID']}</span>
                     <span style="color:{'red' if row['Sisa_Hari'] < 0 else '#555'}; font-size:12px;">{msg_waktu}</span>
                 </div>
-                <small style="color:#666;">📅 {str(row['Tanggal_Parsed'])[:10]}</small><br>
+                <small style="color:#333333;">📅 {str(row['Tanggal_Parsed'])[:10]}</small><br>
                 <div style="font-size:11px; margin-top:2px; margin-bottom:4px; color:#2A9D8F; font-weight:bold;">📍 {row['Kecamatan_Clean']}</div>
-                <i style="font-size:13px; line-height:1.4;">"{str(row['Isi_Laporan'])[:65]}..."</i>
-            </div>
-            """, unsafe_allow_html=True)
+                <i style="color:#333333; font-size:13px; line-height:1.4;">"{str(row['Isi_Laporan'])[:65]}..."</i>
+            </div>""", unsafe_allow_html=True)
             with st.popover("📖 Baca Selengkapnya"):
-                st.markdown(f"**Kecamatan:** {row['Kecamatan_Clean']}")
-                st.markdown(f"**Kategori:** {row['Kategori_Clean']}")
-                st.divider()
                 st.write(row['Isi_Laporan'])
 
         with col_crit:
             st.error(f"🔴 KRITIS ({len(df_kanban_filtered[df_kanban_filtered['Label_Prioritas'] == '🔴 CRITICAL'])})")
-            items = df_kanban_filtered[(df_kanban_filtered['Label_Prioritas'] == '🔴 CRITICAL') | (df_kanban_filtered['Sisa_Hari'] < 0)]
-            for _, r in items.head(5).iterrows(): card(r, "#ffebeb")
-            
+            for _, r in df_kanban_filtered[(df_kanban_filtered['Label_Prioritas'] == '🔴 CRITICAL') | (df_kanban_filtered['Sisa_Hari'] < 0)].head(5).iterrows(): card(r, "#ffebeb")
         with col_warn:
             st.warning(f"🟡 WARNING ({len(df_kanban_filtered[df_kanban_filtered['Label_Prioritas'] == '🟡 WARNING'])})")
-            items = df_kanban_filtered[(df_kanban_filtered['Label_Prioritas'] == '🟡 WARNING') & (df_kanban_filtered['Sisa_Hari'] >= 0)]
-            for _, r in items.head(5).iterrows(): card(r, "#fff8db")
-            
+            for _, r in df_kanban_filtered[(df_kanban_filtered['Label_Prioritas'] == '🟡 WARNING') & (df_kanban_filtered['Sisa_Hari'] >= 0)].head(5).iterrows(): card(r, "#fff8db")
         with col_norm:
             st.success(f"🟢 NORMAL ({len(df_kanban_filtered[df_kanban_filtered['Label_Prioritas'] == '🟢 NORMAL'])})")
-            items = df_kanban_filtered[(df_kanban_filtered['Label_Prioritas'] == '🟢 NORMAL') & (df_kanban_filtered['Sisa_Hari'] >= 0)]
-            for _, r in items.head(5).iterrows(): card(r, "#e6fffa")
+            for _, r in df_kanban_filtered[(df_kanban_filtered['Label_Prioritas'] == '🟢 NORMAL') & (df_kanban_filtered['Sisa_Hari'] >= 0)].head(5).iterrows(): card(r, "#e6fffa")
             
     st.divider()
-    st.markdown(
-        icon_title(
-            "assets/img/bar.png",
-            "Top 10 Kategori Masalah",
-            size=24
-        ),
-        unsafe_allow_html=True
-    )
-    cat_clean = df_view[~df_view['Kategori_Clean'].isin(noise)]
-    if not cat_clean.empty:
+    st.markdown(icon_title("assets/img/bar.png", "Top 10 Kategori Masalah", size=24), unsafe_allow_html=True)
+    if not df_view.empty:
+        cat_clean = df_view[~df_view['Kategori_Clean'].isin(noise)]
         top_cat_df = cat_clean['Kategori_Clean'].value_counts().head(10).reset_index()
         top_cat_df.columns = ['Kategori', 'Jumlah']
-        
-        fig_bar = px.bar(
-            top_cat_df, 
-            x='Jumlah', 
-            y='Kategori', 
-            orientation='h', 
-            text='Jumlah', 
-            color='Jumlah',
-            color_continuous_scale='Blues' 
-        )
+        fig_bar = px.bar(top_cat_df, x='Jumlah', y='Kategori', orientation='h', text='Jumlah', color='Jumlah', color_continuous_scale='Blues')
         fig_bar.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
         st.plotly_chart(fig_bar, use_container_width=True)
 
-# ================= TAB 2: ACTION CENTER (DENGAN LOGIN) =================
+# ================= TAB 2: ACTION CENTER =================
 with tab2:
     if not st.session_state['is_admin']:
-        st.markdown(
-            icon_title(
-                "assets/img/profile.png",
-                "Login Admin",
-                size=26
-            ),
-            unsafe_allow_html=True
-        )
+        st.markdown(icon_title("assets/img/profile.png", "Login Admin", size=26), unsafe_allow_html=True)
         st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
         st.info("Fitur ini khusus untuk Admin yang berwenang mengubah data.")
-        
         with st.form("login_form"):
             email_input = st.text_input("Email")
             pass_input = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Login")
-            
-            if submitted:
+            if st.form_submit_button("Login"):
                 if email_input == ADMIN_EMAIL and pass_input == ADMIN_PASS:
                     st.session_state['is_admin'] = True
                     st.success("Login Berhasil!")
                     st.rerun()
-                else:
-                    st.error("Email atau Password salah.")
+                else: st.error("Email atau Password salah.")
     else:
         col_header, col_btn = st.columns([4, 1])
         with col_header:
-            st.markdown(
-                icon_title(
-                    "assets/img/action.png",
-                    "Admin Center: Update Status & Bukti",
-                    size=26
-                ),
-                unsafe_allow_html=True
-            )
+            st.markdown(icon_title("assets/img/action.png", "Admin Center: Update Status & Bukti", size=26), unsafe_allow_html=True)
         with col_btn:
             if st.button("Logout"):
                 st.session_state['is_admin'] = False
                 st.rerun()
         
         st.success(f"👋 Halo, Admin ({ADMIN_EMAIL})")
-        
         df_open = df[df['Status_Clean'] != 'Selesai'].sort_values('Sisa_Hari')
-        
-        if df_open.empty:
-            st.success("Tidak ada laporan yang perlu diproses.")
+        if df_open.empty: st.success("Tidak ada laporan yang perlu diproses.")
         else:
             c_sel, c_input = st.columns([1, 2])
-            
             with c_sel:
                 st.markdown("### 1. Pilih Laporan")
                 options = df_open['Tracking ID'].unique().tolist()
                 pilihan = st.selectbox("Pilih ID Laporan:", options)
-                
                 rows = df[df['Tracking ID'] == pilihan]
                 if not rows.empty:
                     row_sel = rows.iloc[0]
                     st.warning(f"Status: **{row_sel['Status_Clean']}**")
-                    if row_sel['Sisa_Hari'] < 0:
-                        st.error(f"⚠️ OVERDUE {abs(row_sel['Sisa_Hari'])} HARI")
-                    else:
-                        st.success(f"Sisa Waktu: {row_sel['Sisa_Hari']} Hari")
+                    if row_sel['Sisa_Hari'] < 0: st.error(f"⚠️ OVERDUE {abs(row_sel['Sisa_Hari'])} HARI")
+                    else: st.success(f"Sisa Waktu: {row_sel['Sisa_Hari']} Hari")
                     st.caption("Isi Laporan:")
                     st.text_area("", value=row_sel['Isi_Laporan'], height=150, disabled=True)
-                else:
-                    st.error("Data ID tidak ditemukan.")
-                    st.stop()
-
+                else: st.error("Data ID tidak ditemukan."); st.stop()
             with c_input:
                 st.markdown("### 2. Input Penyelesaian")
                 with st.form("form_update"):
                     st.write(f"Menindaklanjuti Laporan ID: **{pilihan}**")
-                    bukti_input = st.text_area("📝 Bukti Penyelesaian (Wajib Diisi):", 
-                        placeholder="Jelaskan tindakan yang diambil...")
+                    bukti_input = st.text_area("📝 Bukti Penyelesaian:", placeholder="Jelaskan tindakan yang diambil...")
                     konfirmasi = st.checkbox("Saya menyatakan laporan ini selesai ditangani.")
-                    tombol = st.form_submit_button("💾 Simpan & Tandai Selesai", type="primary")
-                    
-                    if tombol:
-                        if not bukti_input:
-                            st.error("Harap isi bukti penyelesaian!")
-                        elif not konfirmasi:
-                            st.error("Harap centang konfirmasi!")
+                    if st.form_submit_button("💾 Simpan & Tandai Selesai", type="primary"):
+                        if not bukti_input: st.error("Harap isi bukti penyelesaian!")
+                        elif not konfirmasi: st.error("Harap centang konfirmasi!")
                         else:
                             with st.spinner("Menyimpan ke database..."):
                                 sukses, pesan = update_laporan(pilihan, bukti_input)
                                 if sukses:
-                                    # --- UPGRADE: ANIMASI BALON SUKSES ---
                                     st.balloons()
                                     st.success("✅ KERJA BAGUS! " + pesan)
                                     time.sleep(2)
                                     st.cache_data.clear()
                                     st.rerun()
-                                else:
-                                    st.error(pesan)
+                                else: st.error(pesan)
 
 # ================= TAB 3: PETA =================
 with tab3:
-    st.markdown(
-    icon_title(
-        "assets/img/map.png",
-        "Peta Sebaran Laporan per Kecamatan",
-        size=26
-    ),
-    unsafe_allow_html=True
-)
+    st.markdown(icon_title("assets/img/map.png", "Peta Sebaran Laporan per Kecamatan", size=26), unsafe_allow_html=True)
     st.caption("Visualisasi sebaran aduan masyarakat berdasarkan wilayah kecamatan.")
-    
     gis_csv = "data_gis_kecamatan_improved.csv"
-    gis_png = "peta_sebaran_laporan_kecamatan_improved.png"
-    
     if os.path.exists(gis_csv):
         df_gis = pd.read_csv(gis_csv)
-        
-        # --- FILTER: Hapus kecamatan 'Tidak Diketahui' dari Peta & Tabel ---
-        df_gis = df_gis[~df_gis['kecamatan'].str.contains("Tidak Diketahui", case=False, na=False)]
+        # --- PERBAIKAN LOGIKA PETA: Filter 'Tidak Diketahui' agar peta tetap muncul ---
+        df_gis = df_gis[~df_gis['kecamatan'].astype(str).str.contains("Tidak Diketahui", case=False, na=False)]
         
         col_map, col_table = st.columns([2, 1])
-        
         with col_map:
             try:
                 import folium
@@ -627,40 +506,86 @@ with tab3:
                 if not valid.empty:
                     m = folium.Map(location=[valid['lat'].mean(), valid['lon'].mean()], zoom_start=10, tiles='CartoDB positron')
                     for _, r in valid.iterrows():
-                        popup_txt = f"<b>{r['kecamatan']}</b><br>Jumlah Laporan: {r['count']}"
-                        folium.CircleMarker(
-                            [r['lat'], r['lon']], 
-                            radius=5 + (r['count']/valid['count'].max()*20),
-                            color='#2a9d8f', fill=True, fill_color='#2a9d8f', fill_opacity=0.7,
-                            popup=folium.Popup(popup_txt, max_width=200)
-                        ).add_to(m)
+                        folium.CircleMarker([r['lat'], r['lon']], radius=5 + (r['count']/valid['count'].max()*20), color='#2a9d8f', fill=True, popup=f"<b>{r['kecamatan']}</b><br>Jumlah: {r['count']}", max_width=200).add_to(m)
                     components.html(m.get_root().render(), height=500)
-                else:
-                    st.warning("Data koordinat kosong.")
-            except ImportError:
-                if os.path.exists(gis_png):
-                    st.image(gis_png, caption="Peta Sebaran Laporan (Statis)", use_container_width=True)
-                else:
-                    st.info("Visualisasi peta tidak dapat dimuat.")
-            except Exception as e:
-                st.error(f"Gagal memuat peta: {e}")
-                
+            except Exception as e: st.error(f"Gagal memuat peta: {e}")
         with col_table:
             st.subheader("Data Kecamatan")
-            st.dataframe(
-                df_gis[['kecamatan', 'count']].sort_values('count', ascending=False).head(15), 
-                use_container_width=True, 
-                hide_index=True
-            )
-            
-    else:
-        st.warning("Data GIS tidak ditemukan. Pastikan file 'data_gis_kecamatan_improved.csv' ada di folder proyek.")
+            st.dataframe(df_gis[['kecamatan', 'count']].sort_values('count', ascending=False).head(15), use_container_width=True, hide_index=True)
+    else: st.warning("Data GIS tidak ditemukan.")
+    st.divider()
+    st.markdown(icon("assets/img/folder.png") + "<b>Data Lengkap</b>", unsafe_allow_html=True)
+    with st.expander(""): st.dataframe(df_view)
+
+# ================= TAB 4: AI INSIGHT (MODIFIKASI) =================
+with tab4:
+    st.markdown(icon_title("assets/img/ai.png", "AI Insight & Machine Learning", size=28), unsafe_allow_html=True)
+    st.caption("Analisis cerdas menggunakan Machine Learning untuk prediksi tren dan penilaian sentimen warga.")
+    section(20)
+    
+    col_ai1, col_ai2 = st.columns([2, 1])
+    
+    # --- BAGIAN KIRI: AI TEXT (FILTER TIDAK DIKETAHUI) ---
+    with col_ai1:
+        st.markdown(icon("assets/img/kanban.png") + "<b>Laporan Analisis Otomatis</b>", unsafe_allow_html=True)
+        with st.container(border=True):
+            with st.spinner("AI sedang menganalisis data..."):
+                time.sleep(1.5)
+                insight_text = generate_ai_insight(df_view, sel_year)
+                placeholder = st.empty()
+                full_text = ""
+                for char in insight_text:
+                    full_text += char
+                    placeholder.markdown(f"🤖 {full_text}")
+                    time.sleep(0.005)
+                    
+    # --- BAGIAN KANAN: GAUGE CHART + LEGENDA ---
+    with col_ai2:
+        st.markdown(icon("assets/img/gauge.png") + "<b>Skor Ketidakpuasan Warga</b>", unsafe_allow_html=True)
+        avg_sentiment = df_view['Sentiment_Score'].mean()
+        fig_gauge = go.Figure(go.Indicator(
+            mode = "gauge+number", value = avg_sentiment, title = {'text': "Skala (1 - 5)"},
+            gauge = {
+                'axis': {'range': [1, 5]}, 'bar': {'color': "#EF4444"},
+                'steps': [
+                    {'range': [1, 2.0], 'color': "#D1FAE5"},
+                    {'range': [2.0, 3.5], 'color': "#FEF3C7"},
+                    {'range': [3.5, 5], 'color': "#FEE2E2"}],
+                'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 4.0}
+            }
+        ))
+        fig_gauge.update_layout(height=280, margin=dict(l=20, r=20, t=30, b=20))
+        st.plotly_chart(fig_gauge, use_container_width=True)
+        
+        # LEGENDA
+        st.markdown("""
+        <div style="background-color: #f8f9fa; padding: 12px; border-radius: 8px; border: 1px solid #ddd; font-size: 13px; line-height: 1.5; color:#333333;">
+            <b>📋 Keterangan Skor:</b><br>
+            <span style="color: #16A34A;">● 1.0 - 1.5 :</span> <b>Sangat Puas</b> (Sangat baik)<br>
+            <span style="color: #4ADE80;">● 1.6 - 2.5 :</span> <b>Puas</b> (Baik)<br>
+            <span style="color: #FACC15;">● 2.6 - 3.5 :</span> <b>Netral</b> (Cukup)<br>
+            <span style="color: #FB923C;">● 3.6 - 4.5 :</span> <b>Tidak Puas</b> (Buruk)<br>
+            <span style="color: #EF4444;">● 4.6 - 5.0 :</span> <b>Sangat Tidak Puas</b> (Sangat buruk/Marah)
+        </div>""", unsafe_allow_html=True)
 
     st.divider()
-    # with st.expander("📂 Data Lengkap (Tabel)"):
-    st.markdown(
-        icon("assets/img/folder.png") + "<b>Data Lengkap</b>",
-        unsafe_allow_html=True
-    )
-    with st.expander(""):
-        st.dataframe(df_view)
+    
+    # --- FITUR FORECASTING (PREDIKSI TREN) ---
+    st.markdown(icon("assets/img/trend.png") + "<b>Prediksi Tren Laporan (Machine Learning)</b>", unsafe_allow_html=True)
+    if len(df_view) > 5:
+        trend_data = df_view.groupby('Bulan').size().reset_index(name='Jumlah')
+        if len(trend_data) > 1:
+            x = np.arange(len(trend_data)); y = trend_data['Jumlah'].values
+            m, c = np.polyfit(x, y, 1)
+            next_x = len(trend_data); next_y = m * next_x + c
+            
+            col_tr1, col_tr2 = st.columns([1, 2])
+            with col_tr1:
+                st.metric("Prediksi Bulan Depan", f"{int(next_y)} Laporan")
+                if next_y > y[-1]: st.warning("⚠️ **Tren Naik:** Diperkirakan laporan meningkat. Siapkan tim ekstra.")
+                else: st.success("✅ **Tren Turun:** Kinerja efektif, laporan menurun.")
+            with col_tr2:
+                trend_data['Garis Prediksi'] = m * x + c
+                fig_forecast = px.line(trend_data, x='Bulan', y=['Jumlah', 'Garis Prediksi'], title="Data Aktual vs Garis Prediksi (Regresi Linear)", color_discrete_map={"Jumlah": "blue", "Garis Prediksi": "red"})
+                st.plotly_chart(fig_forecast, use_container_width=True)
+    else: st.warning("Data belum cukup untuk prediksi tren.")
