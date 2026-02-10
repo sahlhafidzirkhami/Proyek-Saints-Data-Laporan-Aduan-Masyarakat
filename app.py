@@ -9,6 +9,42 @@ from pathlib import Path
 from datetime import datetime, timedelta
 import base64
 import numpy as np
+import google.generativeai as genai
+
+# --- KONFIGURASI GEMINI ---
+# Masukkan API KEY Anda di sini
+genai.configure(api_key="API KEY ANDA")
+
+def initialize_gemini():
+    try:
+        # Cari model yang tersedia secara dinamis
+        available_models = [
+            m.name for m in genai.list_models() 
+            if 'generateContent' in m.supported_generation_methods
+        ]
+        
+        # Urutan prioritas model yang ingin kita pakai
+        priority_list = [
+            'models/gemini-1.5-flash', 
+            'models/gemini-1.5-pro', 
+            'models/gemini-pro'
+        ]
+        
+        # Pilih model pertama yang cocok dari daftar prioritas yang tersedia di akunmu
+        selected_model = next((m for m in priority_list if m in available_models), None)
+        
+        if selected_model:
+            return genai.GenerativeModel(selected_model)
+        else:
+            # Jika tidak ada yang cocok di list, ambil yang pertama tersedia di API
+            return genai.GenerativeModel(available_models[0])
+            
+    except Exception as e:
+        st.error(f"Koneksi API Gagal: {e}")
+        return None
+
+# Inisialisasi Model
+model = initialize_gemini()
 
 # --- KONFIGURASI HALAMAN ---
 st.set_page_config(page_title="SP4N LAPOR MONITORING", layout="wide")
@@ -228,45 +264,56 @@ def update_laporan(tracking_id, bukti_text):
         return False, str(e)
 
 # --- FUNGSI AI INSIGHT GENERATOR ---
-def generate_ai_insight(df, year):
-    total = len(df)
-    if total == 0: return "Data tidak tersedia."
+def get_gemini_prediction(df, year):
+    if model is None:
+        return "AI tidak tersedia karena masalah konfigurasi API."
+    # 1. DATA PREPARATION
     
-    overdue = len(df[(df['Sisa_Hari'] < 0) & (df['Status_Clean'] != 'Selesai')])
-    selesai = len(df[df['Status_Clean'] == 'Selesai'])
-    rate = (selesai/total)*100 if total > 0 else 0
+    # A. Tren per Bulan
+    trend_df = df.groupby('Bulan').size().reset_index(name='Jumlah')
+    trend_text = trend_df.to_string(index=False)
     
-    # --- FILTER NOISE AGAR TIDAK MUNCUL DI AI ---
-    noise_list = ["Tidak Diketahui", "Lainnya", "Nan", "nan", "-"]
-    try:
-        valid_issues = df[~df['Kategori_Clean'].isin(noise_list)]
-        if not valid_issues.empty:
-            top_isu = valid_issues['Kategori_Clean'].mode()[0]
-        else:
-            top_isu = "-"
-    except:
-        top_isu = "-"
-        
-    avg_sent = df['Sentiment_Score'].mean()
-    status_emosi = "Sangat Tidak Puas 😡" if avg_sent > 4.5 else "Tidak Puas 😠" if avg_sent > 3.5 else "Netral 😐" if avg_sent > 2.5 else "Puas 🙂" if avg_sent > 1.5 else "Sangat Puas 😄"
+    # B. Top 5 Masalah
+    top_issues = df['Kategori_Clean'].value_counts().head(5).to_dict()
     
-    insight = f"""
-    Laporan Eksekutif AI (Tahun {year}):
+    # C. Kecamatan Paling Rawan
+    top_loc = df['Kecamatan_Clean'].value_counts().head(3).to_dict()
     
-    Kinerja penyelesaian laporan tercatat sebesar {rate:.1f}%. 
-    Terdapat {overdue} laporan terlambat yang berpotensi menurunkan kepercayaan publik.
+    # D. Contoh Laporan Kritis (Ambil 3 terbaru)
+    critical_samples = df[df['Label_Prioritas'] == '🔴 CRITICAL']['Isi_Laporan'].head(3).tolist()
+
+    # 2. PROMPT ENGINEERING
+    prompt = f"""
+    Bertindaklah sebagai Konsultan Analis Data Pemerintahan untuk SP4N LAPOR.
     
-    Isu Dominan:
-    Keluhan terbanyak berkaitan dengan "{top_isu}".
+    Data Laporan Tahun {year}:
     
-    Sentimen Publik:
-    Analisis bahasa mendeteksi emosi warga: {status_emosi}.
+    [DATA TREN BULANAN]
+    {trend_text}
     
-    Rekomendasi Tindakan:
-    1. Prioritaskan penanganan {overdue} kasus yang sudah melewati SLA.
-    2. Lakukan sosialisasi preventif terkait "{top_isu}".
+    [TOP 5 MASALAH]
+    {top_issues}
+    
+    [LOKASI TERBANYAK]
+    {top_loc}
+    
+    [CONTOH LAPORAN KRITIS WARGA]
+    {critical_samples}
+    
+    TUGAS ANALISIS:
+    1. **Prediksi Tren**: Berdasarkan pola bulanan di atas, prediksi apakah bulan depan laporan akan NAIK atau TURUN? Jelaskan alasannya singkat.
+    2. **Pola Masalah**: Apa korelasi antara masalah teratas dengan lokasi terbanyak? (Misal: Banjir di kecamatan X).
+    3. **Rekomendasi Strategis**: Berikan 3 langkah konkret yang harus dilakukan Pemkab bulan depan untuk mencegah lonjakan laporan.
+    
+    Gunakan bahasa Indonesia yang profesional, tegas, dan berbasis data. Jangan gunakan format markdown tabel, gunakan bullet points.
     """
-    return insight
+    
+    try:
+        # Gunakan model yang sudah divalidasi
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Error saat generate: {str(e)}"
 
 # --- MAIN APP ---
 df = load_data()
@@ -276,7 +323,7 @@ if df.empty:
     st.stop()
 
 # --- SESSION STATE UNTUK LOGIN ---
-if 'is_admin' not in st.session_state:
+if 'is_admin' not in st.session_state:  
     st.session_state['is_admin'] = False
 
 # ================= SIDEBAR =================
@@ -517,75 +564,68 @@ with tab3:
     st.markdown(icon("assets/img/folder.png") + "<b>Data Lengkap</b>", unsafe_allow_html=True)
     with st.expander(""): st.dataframe(df_view)
 
-# ================= TAB 4: AI INSIGHT (MODIFIKASI) =================
+# ================= TAB 4: AI INSIGHT (FINAL) =================
 with tab4:
-    st.markdown(icon_title("assets/img/ai.png", "AI Insight & Machine Learning", size=28), unsafe_allow_html=True)
-    st.caption("Analisis cerdas menggunakan Machine Learning untuk prediksi tren dan penilaian sentimen warga.")
+    st.markdown(icon_title("assets/img/ai.png", "AI Strategic Intelligence (Powered by Gemini)", size=28), unsafe_allow_html=True)
+    st.caption("Analisis prediktif menggunakan Generative AI membaca pola historis laporan warga.")
     section(20)
     
-    col_ai1, col_ai2 = st.columns([2, 1])
+    col_ai1, col_ai2 = st.columns([1.8, 1.2])
     
-    # --- BAGIAN KIRI: AI TEXT (FILTER TIDAK DIKETAHUI) ---
+    # --- BAGIAN KIRI: GEMINI ANALYSIS ---
     with col_ai1:
-        st.markdown(icon("assets/img/kanban.png") + "<b>Laporan Analisis Otomatis</b>", unsafe_allow_html=True)
-        with st.container(border=True):
-            with st.spinner("AI sedang menganalisis data..."):
-                time.sleep(1.5)
-                insight_text = generate_ai_insight(df_view, sel_year)
-                placeholder = st.empty()
-                full_text = ""
-                for char in insight_text:
-                    full_text += char
-                    placeholder.markdown(f"🤖 {full_text}")
-                    time.sleep(0.005)
-                    
-    # --- BAGIAN KANAN: GAUGE CHART + LEGENDA ---
+        st.subheader("🤖 Prediksi & Rekomendasi AI")
+        
+        # Tombol untuk generate (agar hemat kuota API, tidak auto-run)
+        if st.button("🔍 Jalankan Analisis AI", type="primary"):
+            with st.spinner("Gemini sedang membaca data laporan & menghitung prediksi..."):
+                # Panggil fungsi Gemini yang baru
+                insight_result = get_gemini_prediction(df_view, sel_year)
+                
+                # Tampilkan hasil dengan efek mengetik (stream)
+                st.markdown("""
+                <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; border-left:5px solid #2A9D8F;">
+                """, unsafe_allow_html=True)
+                
+                st.markdown(insight_result) # Hasil dari Gemini
+                
+                st.markdown("</div>", unsafe_allow_html=True)
+        else:
+            st.info("Tekan tombol di atas untuk meminta AI menganalisis data terbaru.")
+
+    # --- BAGIAN KANAN: STATISTIK PENDUKUNG ---
     with col_ai2:
-        st.markdown(icon("assets/img/gauge.png") + "<b>Skor Ketidakpuasan Warga</b>", unsafe_allow_html=True)
+        st.markdown(icon("assets/img/gauge.png") + "<b>Sentimen Warga (Realtime)</b>", unsafe_allow_html=True)
+        
+        # Gauge Chart
         avg_sentiment = df_view['Sentiment_Score'].mean()
         fig_gauge = go.Figure(go.Indicator(
-            mode = "gauge+number", value = avg_sentiment, title = {'text': "Skala (1 - 5)"},
+            mode = "gauge+number", value = avg_sentiment, title = {'text': "Skala Ketidakpuasan"},
             gauge = {
                 'axis': {'range': [1, 5]}, 'bar': {'color': "#EF4444"},
                 'steps': [
                     {'range': [1, 2.0], 'color': "#D1FAE5"},
                     {'range': [2.0, 3.5], 'color': "#FEF3C7"},
                     {'range': [3.5, 5], 'color': "#FEE2E2"}],
-                'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 4.0}
+                'threshold': {'line': {'color': "black", 'width': 4}, 'thickness': 0.75, 'value': avg_sentiment}
             }
         ))
-        fig_gauge.update_layout(height=280, margin=dict(l=20, r=20, t=30, b=20))
+        fig_gauge.update_layout(height=250, margin=dict(l=10, r=10, t=30, b=10))
         st.plotly_chart(fig_gauge, use_container_width=True)
         
-        # LEGENDA
+        # Keterangan Gauge
         st.markdown("""
         <div style="background-color: #f8f9fa; padding: 12px; border-radius: 8px; border: 1px solid #ddd; font-size: 13px; line-height: 1.5; color:#333333;">
             <b>📋 Keterangan Skor:</b><br>
-            <span style="color: #16A34A;">● 1.0 - 1.5 :</span> <b>Sangat Puas</b> (Sangat baik)<br>
-            <span style="color: #4ADE80;">● 1.6 - 2.5 :</span> <b>Puas</b> (Baik)<br>
-            <span style="color: #FACC15;">● 2.6 - 3.5 :</span> <b>Netral</b> (Cukup)<br>
-            <span style="color: #FB923C;">● 3.6 - 4.5 :</span> <b>Tidak Puas</b> (Buruk)<br>
-            <span style="color: #EF4444;">● 4.6 - 5.0 :</span> <b>Sangat Tidak Puas</b> (Sangat buruk/Marah)
+            <span style="color: #16A34A;">● 1.0 - 1.5 :</span> <b>Sangat Puas</b><br>
+            <span style="color: #4ADE80;">● 1.6 - 2.5 :</span> <b>Puas</b><br>
+            <span style="color: #FACC15;">● 2.6 - 3.5 :</span> <b>Netral</b><br>
+            <span style="color: #FB923C;">● 3.6 - 4.5 :</span> <b>Tidak Puas</b><br>
+            <span style="color: #EF4444;">● 4.6 - 5.0 :</span> <b>Sangat Tidak Puas</b>
         </div>""", unsafe_allow_html=True)
-
-    st.divider()
-    
-    # --- FITUR FORECASTING (PREDIKSI TREN) ---
-    st.markdown(icon("assets/img/trend.png") + "<b>Prediksi Tren Laporan (Machine Learning)</b>", unsafe_allow_html=True)
-    if len(df_view) > 5:
-        trend_data = df_view.groupby('Bulan').size().reset_index(name='Jumlah')
-        if len(trend_data) > 1:
-            x = np.arange(len(trend_data)); y = trend_data['Jumlah'].values
-            m, c = np.polyfit(x, y, 1)
-            next_x = len(trend_data); next_y = m * next_x + c
-            
-            col_tr1, col_tr2 = st.columns([1, 2])
-            with col_tr1:
-                st.metric("Prediksi Bulan Depan", f"{int(next_y)} Laporan")
-                if next_y > y[-1]: st.warning("⚠️ **Tren Naik:** Diperkirakan laporan meningkat. Siapkan tim ekstra.")
-                else: st.success("✅ **Tren Turun:** Kinerja efektif, laporan menurun.")
-            with col_tr2:
-                trend_data['Garis Prediksi'] = m * x + c
-                fig_forecast = px.line(trend_data, x='Bulan', y=['Jumlah', 'Garis Prediksi'], title="Data Aktual vs Garis Prediksi (Regresi Linear)", color_discrete_map={"Jumlah": "blue", "Garis Prediksi": "red"})
-                st.plotly_chart(fig_forecast, use_container_width=True)
-    else: st.warning("Data belum cukup untuk prediksi tren.")
+        
+        st.divider()
+        
+        # Tampilkan Raw Data kecil untuk verifikasi
+        st.markdown("<b>Data Masukan ke AI:</b>", unsafe_allow_html=True)
+        st.dataframe(df_view[['Tanggal_Parsed', 'Kategori_Clean', 'Kecamatan_Clean']].head(5), hide_index=True)
