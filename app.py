@@ -11,9 +11,12 @@ import base64
 import numpy as np
 import google.generativeai as genai
 
+# --- KONFIGURASI HALAMAN ---
+st.set_page_config(page_title="Dashboard Analisis Pengaduan Masyarakat Kab. Bandung", layout="wide")
+
 # --- KONFIGURASI GEMINI ---
 # Masukkan API KEY Anda di sini
-genai.configure(api_key="API KEY ANDA")
+genai.configure(api_key="AIzaSyDkBAbzV-h_tIveVGk9zvtjZz2HjZWPxGM")
 
 def initialize_gemini():
     try:
@@ -45,9 +48,6 @@ def initialize_gemini():
 
 # Inisialisasi Model
 model = initialize_gemini()
-
-# --- KONFIGURASI HALAMAN ---
-st.set_page_config(page_title="SP4N LAPOR MONITORING", layout="wide")
 
 # --- KONSTANTA ---
 SLA_HARI = 5
@@ -564,32 +564,37 @@ with tab3:
     st.markdown(icon("assets/img/folder.png") + "<b>Data Lengkap</b>", unsafe_allow_html=True)
     with st.expander(""): st.dataframe(df_view)
 
-# ================= TAB 4: AI INSIGHT (FINAL) =================
+# ================= TAB 4: AI INSIGHT (FINAL FIX SESSION STATE) =================
 with tab4:
-    st.markdown(icon_title("assets/img/ai.png", "AI Strategic Intelligence (Powered by Gemini)", size=28), unsafe_allow_html=True)
+    st.markdown(icon_title("assets/img/ai.png", "AI Strategic Intelligence", 28), unsafe_allow_html=True)
     st.caption("Analisis prediktif menggunakan Generative AI membaca pola historis laporan warga.")
     section(20)
     
     col_ai1, col_ai2 = st.columns([1.8, 1.2])
     
+    # 1. INISIALISASI SESSION STATE UNTUK HASIL AI
+    if 'ai_insight_result' not in st.session_state:
+        st.session_state['ai_insight_result'] = None
+
     # --- BAGIAN KIRI: GEMINI ANALYSIS ---
     with col_ai1:
-        st.subheader("🤖 Prediksi & Rekomendasi AI")
+        st.subheader("Prediksi & Rekomendasi AI")
         
-        # Tombol untuk generate (agar hemat kuota API, tidak auto-run)
-        if st.button("🔍 Jalankan Analisis AI", type="primary"):
+        # Tombol untuk generate
+        if st.button("Jalankan Analisis AI", type="primary"):
             with st.spinner("Gemini sedang membaca data laporan & menghitung prediksi..."):
                 # Panggil fungsi Gemini yang baru
-                insight_result = get_gemini_prediction(df_view, sel_year)
-                
-                # Tampilkan hasil dengan efek mengetik (stream)
-                st.markdown("""
-                <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; border-left:5px solid #2A9D8F;">
-                """, unsafe_allow_html=True)
-                
-                st.markdown(insight_result) # Hasil dari Gemini
-                
-                st.markdown("</div>", unsafe_allow_html=True)
+                result = get_gemini_prediction(df_view, sel_year)
+                # SIMPAN HASIL KE SESSION STATE AGAR TIDAK HILANG SAAT RERUN
+                st.session_state['ai_insight_result'] = result
+        
+        # TAMPILKAN HASIL DARI SESSION STATE (JIKA ADA)
+        if st.session_state['ai_insight_result']:
+            st.markdown(f"""
+            <div style="background-color:#f0f2f6; padding:20px; border-radius:10px; border-left:5px solid #2A9D8F; color:#333;">
+                {st.session_state['ai_insight_result']}
+            </div>
+            """, unsafe_allow_html=True)
         else:
             st.info("Tekan tombol di atas untuk meminta AI menganalisis data terbaru.")
 
